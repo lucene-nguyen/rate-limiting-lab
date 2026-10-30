@@ -2,6 +2,8 @@
 
 # Redis Rate Limiter
 
+> 📝 See [docs/LESSONS.md](docs/LESSONS.md) for lessons learned, backed by load-test results.
+
 A hands-on project for learning **Rate Limiting with Redis** using the **Token Bucket algorithm**.
 
 ## What I Implemented
