@@ -9,6 +9,8 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       TRUST_PROXY_HOPS: "1"
+      # open (default) or closed: what the limiter does when Redis is down
+      RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-open}
     deploy:
       replicas: 3
     depends_on:

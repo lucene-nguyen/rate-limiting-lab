@@ -163,3 +163,18 @@ A script exits non-zero (threshold failed) when the limiter lets more requests t
 ```bash
 load-test/redis-outage.sh baseline
 ```
+
+## Redis Failure Policy
+
+`RATE_LIMIT_FAILURE_MODE` decides what the limiter does when Redis is unavailable:
+
+| Mode | Behaviour |
+| --- | --- |
+| `open` (default) | Allow the request without rate limiting and add `RateLimit-Policy-Status: degraded` |
+| `closed` | Respond `503 Service Unavailable` with `Retry-After: 1` |
+
+Either way each instance logs at most one warning per 10s, and the ioredis client is set up to fail fast instead of queueing commands, so requests never wait for Redis to come back (see `src/redis/redis.provider.ts`).
+
+```bash
+RATE_LIMIT_FAILURE_MODE=closed docker compose up -d
+```
