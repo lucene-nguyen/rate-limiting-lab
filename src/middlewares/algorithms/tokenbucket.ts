@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis';
+import { Redis, Result } from 'ioredis';
 
 // How many buckets do we need? -> it depends on the business requirements
 const TOKEN_BUCKET_SIZE = 5;
@@ -6,77 +6,71 @@ const REFILL_RATE = 1; // refill token per 1s
 const TTL = 10; // 10s
 
 // Redis key
-const rateLimitIpTemplate = 'rateLimitIP::::::::';
+const rateLimitIpTemplate = 'rateLimitIP:';
 
-// todo: combine refill + check + consume into one Redis atomic operation.
+// Refill + check + consume in one atomic step, so concurrent requests from
+// any replica can't read the same token count.
+// KEYS[1] = bucket key, ARGV = capacity, refill rate (tokens/s), ttl (s)
+// Returns { allowed (1|0), remaining tokens (floored) }.
+const TOKEN_BUCKET_SCRIPT = `
+local capacity = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+
+-- Redis clock, so every replica agrees on "now" regardless of host drift
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+
+local bucket = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(bucket[1])
+local ts = tonumber(bucket[2])
+if tokens == nil or ts == nil then
+  tokens = capacity
+  ts = now
+end
+
+local elapsed = math.max(0, now - ts)
+tokens = math.min(capacity, tokens + elapsed * rate / 1000)
+
+local allowed = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+end
+
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', now)
+redis.call('EXPIRE', KEYS[1], ttl)
+
+return { allowed, math.floor(tokens) }
+`;
+
+declare module 'ioredis' {
+  interface RedisCommander<Context> {
+    tokenBucket(
+      key: string,
+      capacity: number,
+      refillRate: number,
+      ttl: number,
+    ): Result<[allowed: 0 | 1, remainingTokens: number], Context>;
+  }
+}
+
+export function defineTokenBucketCommand(redis: Redis): void {
+  redis.defineCommand('tokenBucket', {
+    numberOfKeys: 1,
+    lua: TOKEN_BUCKET_SCRIPT,
+  });
+}
+
 export async function tokenBucketFunction(
   ip: string,
   redis: Redis,
 ): Promise<boolean> {
-  console.log(`user ip: ${ip}`);
-
-  const key = rateLimitIpTemplate + ip;
-  let isAllow = true;
-
-  // get available tokens or set it if this key doesn't exist
-  await redis.set(
-    key,
-    buildValue(TOKEN_BUCKET_SIZE, Date.now()),
-    'EX',
+  const [allowed] = await redis.tokenBucket(
+    rateLimitIpTemplate + ip,
+    TOKEN_BUCKET_SIZE,
+    REFILL_RATE,
     TTL,
-    'NX',
   );
-  const bucketData = (await redis.get(key)) as string;
-  console.log('bucketData: ', bucketData);
-  const [remainTokens, lastRefill] = bucketData.split(':').map(Number);
-
-  // call refiller when new request come into the app
-  const { availableTokens, refillTime } = await refiller(
-    remainTokens,
-    lastRefill,
-    key,
-    redis,
-  );
-  console.log('availableTokens: ', availableTokens);
-
-  if (availableTokens > 0) {
-    // get 1 token
-    const newValue = `${availableTokens - 1}:${refillTime}`;
-    await redis.set(key, newValue, 'KEEPTTL');
-    isAllow = true;
-  } else {
-    isAllow = false;
-  }
-
-  return isAllow;
-}
-
-async function refiller(
-  remainTokens: number,
-  lastRefill: number,
-  key: string,
-  redis: Redis,
-): Promise<{ availableTokens: number; refillTime: number }> {
-  console.log('lastRefill: ', lastRefill);
-  const elapsedTime = Math.floor((Date.now() - lastRefill) / 1000); //second
-  console.log('elapsedTime: ', elapsedTime);
-  const tokensNeedFill = Math.floor(elapsedTime / REFILL_RATE);
-  console.log('tokensNeedFill: ', tokensNeedFill);
-  let availableTokens = remainTokens;
-  let refillTime = lastRefill;
-  if (tokensNeedFill > 0) {
-    availableTokens =
-      remainTokens + tokensNeedFill <= TOKEN_BUCKET_SIZE
-        ? remainTokens + tokensNeedFill
-        : TOKEN_BUCKET_SIZE;
-    refillTime = lastRefill + tokensNeedFill * 1000;
-    const newValue = buildValue(availableTokens, refillTime);
-    await redis.set(key, newValue, 'KEEPTTL');
-  }
-
-  return { availableTokens, refillTime };
-}
-
-function buildValue(tokens: number, time: number): string {
-  return `${tokens}:${time}`;
+  return allowed === 1;
 }

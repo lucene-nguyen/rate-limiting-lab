@@ -10,9 +10,9 @@ A hands-on project for learning **Rate Limiting with Redis** using the **Token B
 - Redis for storing bucket state
 - Token refill based on elapsed time
 - Per-IP rate limiting
-- Redis key expiration with TTL
-- Redis `SET NX` for bucket initialization
-- Redis `KEEPTTL` for preserving key expiration when updating the bucket
+- Redis key expiration with TTL, refreshed on every request
+- One atomic Lua script (`redis.defineCommand`) for refill + check + consume
+- Redis `TIME` as the shared clock across replicas
 
 ## Token Bucket Configuration
 
@@ -28,16 +28,11 @@ Each IP has its own bucket:
 rateLimitIP:{ip}
 ```
 
-The bucket state is stored as:
+The bucket state is stored as a hash:
 
 ```text
-tokens:lastRefillTime
-```
-
-Example:
-
-```text
-4:1791359589828
+tokens  4.317           # fractional, refilled continuously
+ts      1791359589828   # last update, ms from Redis TIME
 ```
 
 ## How It Works
@@ -71,29 +66,22 @@ Allow
 
 ## Redis Operations
 
-### Initialize Bucket
+Everything runs inside one Lua script, so the whole read-modify-write is atomic
+even with many API replicas sharing the same Redis:
 
 ```text
-SET key value EX 10 NX
+TIME                                   -- now, in ms
+HMGET key tokens ts                    -- missing key => full bucket
+tokens = min(capacity, tokens + elapsedMs * rate / 1000)
+if tokens >= 1 then tokens = tokens - 1, allowed = 1
+HSET key tokens <tokens> ts <now>
+EXPIRE key 10                          -- refreshed on every call
+return { allowed, floor(tokens) }
 ```
 
-`NX` initializes the bucket only when the key does not already exist.
-
-### Read Bucket
-
-```text
-GET key
-```
-
-The stored value contains the remaining tokens and the last refill timestamp.
-
-### Update Bucket
-
-```text
-SET key value KEEPTTL
-```
-
-`KEEPTTL` keeps the existing expiration time when the bucket value is updated.
+The script is registered once per client with `redis.defineCommand('tokenBucket', ...)`
+and called as `redis.tokenBucket(key, capacity, rate, ttl)`. ioredis sends it with
+`EVALSHA` and falls back to `EVAL` if the script is not cached yet.
 
 ## Example
 
