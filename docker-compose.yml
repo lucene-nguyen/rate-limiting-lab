@@ -1,0 +1,35 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    environment:
+      REDIS_URL: redis://redis:6379
+      TRUST_PROXY_HOPS: "1"
+    deploy:
+      replicas: 3
+    depends_on:
+      - redis
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+  # Run on demand: docker compose run --rm k6 run /scripts/burst.js
+  k6:
+    image: grafana/k6:latest
+    profiles: ["loadtest"]
+    volumes:
+      - ./load-test:/scripts:ro
+    environment:
+      BASE_URL: http://nginx
+    depends_on:
+      - nginx

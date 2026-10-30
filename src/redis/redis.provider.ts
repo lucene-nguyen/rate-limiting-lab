@@ -6,6 +6,6 @@ export const REDIS = 'redis';
 export const RedisProvider: Provider = {
   provide: REDIS,
   useFactory: () => {
-    return new Redis('redis://localhost:6379');
+    return new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
   },
 };

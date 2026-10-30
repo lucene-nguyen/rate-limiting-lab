@@ -134,3 +134,30 @@ Then one token is consumed for the current request.
 ## Purpose
 
 This project is a practical exercise to understand how **Token Bucket rate limiting works with Redis**, including token refill, bucket expiration, and Redis key operations.
+
+## Production-like Environment
+
+```text
+k6 ──► Nginx :8080 ──► api × 3 (NestJS) ──► Redis
+```
+
+Three API replicas sit behind Nginx and share one Redis, the same shape as a real deployment. `TRUST_PROXY_HOPS=1` makes `req.ip` the real client IP instead of Nginx's. Every response carries an `X-Instance` header naming the replica that served it.
+
+```bash
+docker compose up -d --build
+curl -i http://localhost:8080/        # check X-Instance and the 200/429
+```
+
+## Load Tests
+
+| Script | What it checks | Correct limiter |
+| --- | --- | --- |
+| `load-test/burst.js` | 50 simultaneous requests (race condition) | ≤ 5 allowed |
+| `load-test/steady.js` | 3 req/s for 30s (TTL reset) | ≤ 35 allowed |
+
+```bash
+docker compose run --rm k6 run /scripts/burst.js
+docker compose run --rm k6 run /scripts/steady.js
+```
+
+A script exits non-zero (threshold failed) when the limiter lets more requests through than it should. Each script waits 11s first so the previous bucket has expired.
