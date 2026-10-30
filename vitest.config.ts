@@ -9,5 +9,10 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    coverage: {
+      // List every source file, including ones no test imports yet.
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.spec.ts', 'src/**/*.int-spec.ts'],
+    },
   },
 });
