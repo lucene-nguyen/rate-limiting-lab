@@ -155,3 +155,11 @@ docker compose run --rm k6 run /scripts/steady.js
 > ```
 
 A script exits non-zero (threshold failed) when the limiter lets more requests through than it should. Each script waits 11s first so the previous bucket has expired.
+
+### Redis outage
+
+`load-test/redis-outage.sh <label>` sends a constant 20 req/s for 60s, stops Redis at ~20s and starts it again at ~40s, then prints status codes and latency before/during/after the outage plus the recovery time (needs Python). Raw results go to `load-test/results/` (git-ignored).
+
+```bash
+load-test/redis-outage.sh baseline
+```
