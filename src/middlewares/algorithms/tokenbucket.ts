@@ -11,7 +11,9 @@ const rateLimitIpTemplate = 'rateLimitIP:';
 // Refill + check + consume in one atomic step, so concurrent requests from
 // any replica can't read the same token count.
 // KEYS[1] = bucket key, ARGV = capacity, refill rate (tokens/s), ttl (s)
-// Returns { allowed (1|0), remaining tokens (floored) }.
+// Returns { allowed (1|0), remaining tokens (floored), ms until the bucket is
+// full, ms until 1 token is available (0 if one already is) }.
+// Lua truncates numbers to integers on return, hence integer ms.
 const TOKEN_BUCKET_SCRIPT = `
 local capacity = tonumber(ARGV[1])
 local rate = tonumber(ARGV[2])
@@ -41,7 +43,13 @@ end
 redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', now)
 redis.call('EXPIRE', KEYS[1], ttl)
 
-return { allowed, math.floor(tokens) }
+local resetMs = math.ceil((capacity - tokens) * 1000 / rate)
+local retryAfterMs = 0
+if tokens < 1 then
+  retryAfterMs = math.ceil((1 - tokens) * 1000 / rate)
+end
+
+return { allowed, math.floor(tokens), resetMs, retryAfterMs }
 `;
 
 declare module 'ioredis' {
@@ -51,7 +59,15 @@ declare module 'ioredis' {
       capacity: number,
       refillRate: number,
       ttl: number,
-    ): Result<[allowed: 0 | 1, remainingTokens: number], Context>;
+    ): Result<
+      [
+        allowed: 0 | 1,
+        remainingTokens: number,
+        resetMs: number,
+        retryAfterMs: number,
+      ],
+      Context
+    >;
   }
 }
 
@@ -62,15 +78,29 @@ export function defineTokenBucketCommand(redis: Redis): void {
   });
 }
 
+export interface TokenBucketResult {
+  allowed: boolean;
+  limit: number; // bucket capacity
+  remaining: number; // tokens left after this request, floored
+  resetSeconds: number; // until the bucket is full again
+  retryAfterSeconds: number; // until at least 1 token is available, min 1
+}
+
 export async function tokenBucketFunction(
   ip: string,
   redis: Redis,
-): Promise<boolean> {
-  const [allowed] = await redis.tokenBucket(
+): Promise<TokenBucketResult> {
+  const [allowed, remaining, resetMs, retryAfterMs] = await redis.tokenBucket(
     rateLimitIpTemplate + ip,
     TOKEN_BUCKET_SIZE,
     REFILL_RATE,
     TTL,
   );
-  return allowed === 1;
+  return {
+    allowed: allowed === 1,
+    limit: TOKEN_BUCKET_SIZE,
+    remaining,
+    resetSeconds: Math.ceil(resetMs / 1000),
+    retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000)),
+  };
 }

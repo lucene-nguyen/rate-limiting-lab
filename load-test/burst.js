@@ -34,6 +34,16 @@ export default function () {
 
   check(res, {
     'status is 200 or 429': (r) => r.status === 200 || r.status === 429,
+    '429 has Retry-After': (r) =>
+      r.status !== 429 || Number(r.headers['Retry-After']) >= 1,
+    'RateLimit-Remaining is 0..5': (r) => {
+      const remaining = r.headers['Ratelimit-Remaining'];
+      return (
+        remaining !== undefined &&
+        Number(remaining) >= 0 &&
+        Number(remaining) <= CAPACITY
+      );
+    },
     [`served by ${res.headers['X-Instance'] || 'unknown'}`]: () => true,
   });
 }
