@@ -19,6 +19,8 @@ export const options = {
   thresholds: {
     // Fails the run (non-zero exit) when the limiter lets too much through.
     allowed: [`count<=${CAPACITY}`],
+    // Any failed check (status, Retry-After, RateLimit-Remaining) fails the run.
+    checks: ['rate==1'],
   },
 };
 
