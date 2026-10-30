@@ -1,8 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
-import { CacheModule } from '@nestjs/cache-manager';
-import { createKeyv } from '@keyv/redis';
 import { RateLimiter } from './middlewares/rate-limiter.middleware.js';
 import { RedisProvider } from './redis/redis.provider.js';
 @Module({

@@ -2,7 +2,7 @@ import {
   Inject,
   Injectable,
   NestMiddleware,
-  UnauthorizedException,
+  BadRequestException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -19,12 +19,12 @@ export class RateLimiter implements NestMiddleware {
   ) {}
   async use(req: Request, res: any, next: (error?: any) => void) {
     const ip = req.ip as string;
-    if (!ip) throw new UnauthorizedException();
+    if (!ip) throw new BadRequestException('Unable to determine client IP');
 
     const isAllow = await tokenBucketFunction(ip, this.redis);
     if (!isAllow)
       throw new HttpException(
-        'Too many request, please try again',
+        'Too many requests, please try again later.',
         HttpStatus.TOO_MANY_REQUESTS,
       );
     next();

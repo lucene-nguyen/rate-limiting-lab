@@ -148,4 +148,10 @@ docker compose run --rm k6 run /scripts/burst.js
 docker compose run --rm k6 run /scripts/steady.js
 ```
 
+> **Git Bash on Windows:** prefix the commands with `MSYS_NO_PATHCONV=1`, otherwise Git Bash rewrites `/scripts/burst.js` to a Windows path (`C:/Program Files/Git/scripts/burst.js`) and k6 can't find the script. PowerShell and cmd are unaffected.
+>
+> ```bash
+> MSYS_NO_PATHCONV=1 docker compose run --rm k6 run /scripts/burst.js
+> ```
+
 A script exits non-zero (threshold failed) when the limiter lets more requests through than it should. Each script waits 11s first so the previous bucket has expired.
