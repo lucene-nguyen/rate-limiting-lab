@@ -178,6 +178,74 @@ Logging every failed request would produce 20 req/s × 3 instances of identical 
 
 ---
 
+## Phase 5 — Testing foundation & CI
+
+Baseline before any test existed: `npm test` exited 1 ("No test files found") and coverage was 0% (0/77 statements), including all of `src/middlewares/`.
+
+| `src/middlewares/` coverage | Before | After (unit) | After (integration) |
+|---|---|---|---|
+| `rate-limiter.middleware.ts` (stmts / branches) | 0% / 0% | 100% / 92.9% | — |
+| `tokenbucket.ts` (stmts) | 0% | 87.5% | 100% |
+| Tests | 0 | 11 unit | 10 integration |
+
+### 24. "We have no tests" is a measurement too
+
+`npm test` was listed as a check in `CLAUDE.md`, but it failed because there were no test files. Nobody noticed, because nobody ran it.
+
+**Takeaway:** a check that is never run is not a check. CI is what turns a list of commands into a guarantee.
+
+### 25. A test only proves something once you've seen it fail
+
+The concurrency test (50 parallel calls over 10 connections, expect exactly 5 allowed) was run against the original multi-step implementation from `7504cf8` on a throwaway branch:
+
+| Implementation | Allowed out of 50 | Runs |
+|---|---|---|
+| Original `SET NX → GET → SET` (`7504cf8`) | **50** | 5 of 5 failed |
+| Same original code, 7 *sequential* calls | 5 (then rejected) | passed |
+| Lua script | 5 | passed |
+
+The sequential run shows the old code is correct without concurrency, so the failure is the race and nothing else.
+
+**Takeaway:** before trusting a regression test, point it at the bug it is meant to catch.
+
+### 26. A tight in-process test can be more sensitive than a load test
+
+k6 through Nginx let **22** of 50 requests through the old code; the integration test let **50** through. Without HTTP and proxy jitter, all 50 reads land before the first write. The integration test also runs in ~30 ms instead of ~13 s.
+
+**Takeaway:** catch logic races close to the store (fast, strict); keep end-to-end load tests for what only the full system shows.
+
+### 27. Coverage can't see inside a Lua string
+
+The integration tests give `tokenbucket.ts` 100% coverage and the unit tests 87.5%, but the script is a string: V8 coverage measures the TypeScript wrapper, not a single Lua branch. The script's branches (missing key, refill, cap, reject, TTL, fractional retry-after) are covered only because each has its own behavioral test. The Vitest text reporter also hid the 100%-covered file entirely; the JSON summary showed it.
+
+**Takeaway:** coverage numbers describe the host language only. For embedded code, list its branches and test each one.
+
+### 28. Check that tests can fail (cheap mutation testing)
+
+Two deliberate bugs in the middleware were each caught by exactly the right test: removing the warning throttle failed the throttling test; removing `Retry-After` on 503 failed the fail-closed test.
+
+**Takeaway:** break the code on purpose for a minute. A test that still passes is decoration.
+
+### 29. Test time-based logic by changing the rate, not by waiting
+
+The script takes capacity and rate as arguments, so refill tests use 100 tokens/s and sleep 30–200 ms instead of seconds. Assertions only use bounds that a slow machine can't break (a lower bound on refill, an exact cap). 6 consecutive runs were green; the whole suite takes ~5.5 s, almost all of it starting the container. Warning throttling is tested with fake timers, so 10 s of throttling takes 0 ms.
+
+**Takeaway:** make time a parameter. Fast and deterministic beats realistic and flaky.
+
+### 30. Config read at import time makes tests awkward
+
+`RATE_LIMIT_FAILURE_MODE` is read when the module loads, so every unit test has to reset modules, stub the env var and re-import. A harness bug followed: the mocked limiter survived `vi.resetModules()`, and in Vitest 4 `restoreAllMocks()` no longer resets `vi.fn()` mocks, so call counts leaked between tests until `vi.resetAllMocks()` was added.
+
+**Takeaway:** inject configuration (constructor / DI) instead of reading globals at import. Planned with policies (Phase 7).
+
+### 31. Verify CI on the platform CI runs on
+
+The lockfile was produced on Windows; CI runs on Linux. `npm ci`, lint, type-check and unit tests were re-run in a `node:24` container to prove the lockfile installs there. `actionlint` caught a shellcheck warning in the workflow. Every CI step then passed locally in workflow order. The workflow has not run on GitHub yet: nothing was pushed.
+
+**Takeaway:** a workflow file isn't proven until it has run on the target OS. Lint it, then reproduce its steps where you can.
+
+---
+
 ## Open Issues (tracked in Phase 6, LEARNING-117)
 
 - **Script bugs are treated as "Redis down".** In fail-open mode, a broken Lua script would silently disable rate limiting. Connection errors and script errors (`ReplyError`) need different handling.
@@ -185,4 +253,11 @@ Logging every failed request would produce 20 req/s × 3 instances of identical 
 - **Fail-open has no limit at all.** Consider a per-instance in-memory fallback (≈ `limit / replicas`).
 - **Startup:** requests before the first Redis connection take the failure path. Add a readiness check.
 - **Degraded state is invisible to operators.** A response header isn't monitoring; this needs metrics and alerts (Phase 14).
-- **The 400 path for a missing IP is untested** behind Nginx (Phase 5).
+- ~~**The 400 path for a missing IP is untested.**~~ Covered by a unit test in Phase 5. Not reachable end-to-end behind Nginx, where `req.ip` is always set.
+
+## Open Issues (other phases)
+
+- **Failure mode is read at import time** (lesson 30). Inject it, together with the limiter config, when policies arrive (Phase 7).
+- **CI has never run on GitHub.** The workflow is linted and every step passes locally; it runs on the first push.
+- **No coverage for the Lua script itself** (lesson 27). Behavioral tests are the only guard; keep one test per script branch.
+- **Tooling warnings:** Vitest suggests replacing `vite-tsconfig-paths` with `resolve.tsconfigPaths`; Prettier already flagged `app.controller.ts`, `app.service.ts`, `main.ts` and `vitest.config.ts` before Phase 5. Not blocking.

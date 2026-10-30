@@ -8,7 +8,7 @@ Instructions for Claude Code working in this repository. Read this before every 
 The goal is understanding backed by evidence, not just working code. Every change must be proven
 by a measurement.
 
-- Plan: Jira task **LEARNING-111**, one subtask per phase (1–16). Phases 1–4 are done.
+- Plan: Jira task **LEARNING-111**, one subtask per phase (1–16). Phases 1–5 are done.
 - Lessons: `docs/LESSONS.md`, numbered, grouped by phase.
 
 ## Architecture
@@ -36,7 +36,9 @@ MSYS_NO_PATHCONV=1 docker compose run --rm --no-deps k6 run /scripts/burst.js
 MSYS_NO_PATHCONV=1 docker compose run --rm --no-deps k6 run /scripts/steady.js
 load-test/redis-outage.sh <label>                              # Redis outage experiment (needs Python)
 npm run lint && npx tsc --noEmit                               # static checks
-npm test                                                       # unit tests (Vitest)
+npm test                                                       # unit tests (Vitest, *.spec.ts)
+npm run test:integration                                       # Lua script vs real Redis (Testcontainers, needs Docker)
+npm run test:cov                                               # unit test coverage
 docker compose down                                            # stop the stack
 ```
 
@@ -54,7 +56,8 @@ Follow these steps in order. Do not skip step 2.
    Record the real numbers. If the problem cannot be reproduced, stop and report that.
 3. **Fix** in small steps, one logical change per commit.
 4. **Prove.** Re-run the same test from step 2. It must now pass.
-5. **Regress.** Run every existing check: lint, type-check, unit tests, `burst.js`, `steady.js`.
+5. **Regress.** Run every existing check: lint, type-check, unit tests, integration tests, `burst.js`, `steady.js`.
+   CI (`.github/workflows/ci.yml`) runs all of them except `steady.js`.
 6. **Record lessons.** Add new lessons to `docs/LESSONS.md` under the phase heading: what happened,
    the numbers, and one **Takeaway**. Include wrong predictions and test-harness bugs too.
    Move anything left unsolved to **Open Issues** with the phase that will handle it.

@@ -138,6 +138,16 @@ docker compose up -d --build
 curl -i http://localhost:8080/        # check X-Instance and the 200/429
 ```
 
+## Tests
+
+| Command | What it runs | Needs |
+| --- | --- | --- |
+| `npm test` | Unit tests (`*.spec.ts`): middleware headers, 429/400/503, fail-open/closed, log throttling | — |
+| `npm run test:integration` | The Lua script against a real `redis:7-alpine` (`*.int-spec.ts`): capacity, refill, TTL, header values, 50 concurrent calls | Docker |
+| `npm run test:cov` | Unit tests with coverage | — |
+
+CI (`.github/workflows/ci.yml`) runs lint, type-check, unit and integration tests, then starts the stack and runs `burst.js` as a smoke test.
+
 ## Load Tests
 
 | Script | What it checks | Correct limiter |
