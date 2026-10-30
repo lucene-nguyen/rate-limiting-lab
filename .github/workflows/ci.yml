@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24 # same as the Dockerfile
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      # Starts redis:7-alpine with Testcontainers (Docker is preinstalled).
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Start stack (Nginx -> 3 API replicas -> Redis)
+        run: |
+          docker compose up -d --build
+          # No healthchecks in compose: wait until Nginx gets an answer from the API.
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)
+            if [ "$code" = 200 ] || [ "$code" = 429 ]; then echo "ready ($code)"; exit 0; fi
+            sleep 1
+          done
+          echo "stack not ready after 30s"; exit 1
+
+      # Short smoke run: burst.js fails on its allowed and checks thresholds.
+      # --no-deps so compose never recreates the API containers mid-test.
+      - name: k6 smoke (burst.js)
+        run: docker compose run --rm --no-deps k6 run /scripts/burst.js
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
